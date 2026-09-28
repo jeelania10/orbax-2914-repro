@@ -1,0 +1,44 @@
+name: orbax-2914-windows-repro
+on: workflow_dispatch
+
+jobs:
+  repro:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [as-of-report, latest]
+    steps:
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Create venv
+        run: uv venv -p 3.13 .venv
+
+      # Reporter's exact command, resolved as of the report date (expected to FAIL)
+      - name: Install orbax-checkpoint as of 2026-02-19
+        if: matrix.case == 'as-of-report'
+        run: uv pip install orbax-checkpoint --exclude-newer 2026-02-20T00:00:00Z
+
+      # Same command today (expected to PASS)
+      - name: Install latest orbax-checkpoint + flax
+        if: matrix.case == 'latest'
+        run: |
+          uv pip install orbax-checkpoint flax
+          uv pip list | Select-String -Pattern "orbax|uvloop|nest|flax|jax"
+
+      - name: Smoke test (save/restore checkpoint)
+        if: matrix.case == 'latest'
+        run: |
+          @'
+          import os, tempfile
+          import numpy as np
+          import orbax.checkpoint as ocp
+          import flax
+
+          path = os.path.join(tempfile.mkdtemp(), "ckpt")
+          ckptr = ocp.StandardCheckpointer()
+          ckptr.save(path, {"a": np.arange(4)})
+          ckptr.wait_until_finished()
+          print("restored:", ckptr.restore(path))
+          print("flax", flax.__version__, "OK")
+          '@ | .venv\Scripts\python -
